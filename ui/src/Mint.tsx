@@ -1,11 +1,8 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React from "react";
 import { useEthers } from "@usedapp/core";
-import { ethers, providers } from "ethers";
-import { getAddress } from "ethers/lib/utils";
 import { WalletConnectConnector } from "@web3-react/walletconnect-connector";
-import { HitchhikerLE__factory, utils } from "contracts";
-import data from "contracts/airdrops/0.json";
 import "./App.css";
+import { useHitchhikerLE } from "./hooks/useHitchhikerLE";
 
 const walletconnect = new WalletConnectConnector({
   rpc: {
@@ -16,80 +13,13 @@ const walletconnect = new WalletConnectConnector({
   qrcode: true,
 });
 
-type AirdropData = {
-  [key: string]: number;
-};
-
-const airdrapData = data as AirdropData;
-
-const getContract = (lib: ethers.providers.Provider) => {
-  const contract = HitchhikerLE__factory.connect(
-    process.env.CONTRACT_ADDRESS ||
-      "0x5fbdb2315678afecb367f032d93f642f64180aa3",
-    lib
-  );
-  return contract;
-};
-
-const useContractData = (
-  id: number,
-  lib?: providers.Provider,
-  account?: string
-) => {
-  // claimable amount
-  const [claimableAmount, setClaimableAmount] = useState<number>();
-  const updateClaimableAmount = useCallback(async () => {
-    if (!lib || !account) {
-      setClaimableAmount(undefined);
-      return;
-    }
-    const eligibleAcc = Object.keys(airdrapData).find(
-      (k) => getAddress(k) === account
-    );
-    if (!eligibleAcc) return 0;
-    const assigned = airdrapData[eligibleAcc];
-    const claimed = (await getContract(lib).claimed(id, account)).toNumber();
-    const claimable = assigned - claimed;
-    setClaimableAmount(claimable);
-  }, [id, account, lib]);
-  // mintable until
-  const [mintableUntil, setMintableUntil] = useState<Date>();
-  const updateClaimableUntil = useCallback(async () => {
-    if (!lib || !account) {
-      setMintableUntil(undefined);
-      return;
-    }
-    const claimableUntil = (
-      await getContract(lib).mintableUntil(id)
-    ).toNumber();
-    const d = new Date(claimableUntil * 1000);
-    setMintableUntil(d);
-  }, [id, account, lib]);
-
-  useEffect(() => {
-    updateClaimableAmount();
-    updateClaimableUntil();
-    lib?.on("block", updateClaimableAmount);
-    lib?.on("block", updateClaimableUntil);
-    return () => {
-      lib?.off("block", updateClaimableAmount);
-      lib?.off("block", updateClaimableUntil);
-    };
-  }, [lib, updateClaimableAmount, updateClaimableUntil]);
-  return [claimableAmount, mintableUntil];
-};
-
 function Mint() {
   const { activateBrowserWallet, activate, library, account } = useEthers();
-  const [claimableAmount, claimableUntil] = useContractData(
+  const { eligible, claimableAmount, mintableUntil, claim } = useHitchhikerLE(
     0,
     library,
     account || undefined
   );
-  const eligible =
-    !!account &&
-    Object.keys(airdrapData).find((k) => getAddress(k) === account);
-
   return (
     <div>
       {!library ? (
@@ -104,46 +34,8 @@ function Mint() {
       )}
       <p>Eligible: {eligible ? "true" : "false"}</p>
       <p>Mintable: {claimableAmount}</p>
-      <p>Claimable until: {claimableUntil?.toString()}</p>
-      <button
-        disabled={!eligible}
-        onClick={async () => {
-          if (!library || !account) {
-            alert("Connect wallet first");
-            return;
-          }
-          const signer = library.getSigner();
-          const contract = HitchhikerLE__factory.connect(
-            process.env.CONTRACT_ADDRESS ||
-              "0x5FbDB2315678afecb367f032d93F642f64180aa3",
-            library
-          );
-          try {
-            console.log("get proof");
-            console.log(
-              "leaves",
-              Object.keys(airdrapData).map((key) => ({
-                address: key,
-                amount: airdrapData[key] as number,
-              }))
-            );
-            console.log("account", account);
-            // TODO: implement merkle proof here
-            const proof = utils.merkleProof(
-              Object.keys(airdrapData).map((key) => ({
-                address: getAddress(key),
-                amount: airdrapData[key] as number,
-              })),
-              account
-            );
-            console.log("proof is", proof);
-            await contract.connect(signer).claim(0, 1, 1, proof);
-          } catch (e) {
-            const message = (e as any).message;
-            alert(message);
-          }
-        }}
-      >
+      <p>Claimable until: {mintableUntil?.toString()}</p>
+      <button disabled={!eligible} onClick={claim}>
         {eligible
           ? "Mint with a merkle proof"
           : "You're not eligible for the claim"}
